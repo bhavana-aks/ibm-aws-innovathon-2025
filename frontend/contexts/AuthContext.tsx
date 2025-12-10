@@ -1,3 +1,4 @@
+// 10-12-25: Added email extraction for authenticated user display
 // 15-01-25: Created auth context for managing authentication state
 'use client';
 
@@ -7,6 +8,7 @@ import { getCurrentUser, signIn, signUp, signOut, confirmSignUp, fetchAuthSessio
 interface AuthContextType {
   user: any | null;
   tenantId: string | null;
+  email: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (username: string, password: string) => Promise<void>;
@@ -21,6 +23,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<any | null>(null);
   const [tenantId, setTenantId] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshAuth = async () => {
@@ -32,15 +35,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await fetchAuthSession();
       const idToken = session.tokens?.idToken;
       const tenantIdFromToken = idToken?.payload?.['custom:tenant_id'] as string | undefined;
+      const emailFromToken = typeof idToken?.payload?.email === 'string' ? idToken.payload.email : undefined;
+      const loginId = currentUser?.signInDetails?.loginId as string | undefined;
       
       if (tenantIdFromToken) {
         setTenantId(tenantIdFromToken);
       }
+      setEmail(emailFromToken ?? loginId ?? null);
     } catch (error: any) {
       // User not authenticated or Amplify not configured
       if (error.name === 'NotAuthorizedException' || error.message?.includes('not configured')) {
         setUser(null);
         setTenantId(null);
+        setEmail(null);
       } else {
         console.error('Auth refresh error:', error);
       }
@@ -104,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signOut();
       setUser(null);
       setTenantId(null);
+      setEmail(null);
     } catch (error) {
       console.error('Logout error:', error);
       throw error;
@@ -115,6 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         tenantId,
+        email,
         isLoading,
         isAuthenticated: !!user,
         login,

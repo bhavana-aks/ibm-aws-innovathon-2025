@@ -1,3 +1,4 @@
+// 10-12-25: Removed tenant ID input; tenant now auto-assigned
 // 15-01-25: Created signup page with tenant_id registration
 'use client';
 
@@ -8,7 +9,6 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [tenantId, setTenantId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirmationCode, setConfirmationCode] = useState('');
@@ -26,8 +26,7 @@ export default function SignupPage() {
         await confirmRegistration(email, confirmationCode);
         router.push('/login');
       } else {
-        // Generate tenant ID if not provided (for MVP, use email-based)
-        const finalTenantId = tenantId || `TENANT#${Date.now()}`;
+        const finalTenantId = `TENANT#${Date.now()}`;
         await register(email, password, email, finalTenantId);
         setNeedsConfirmation(true);
       }
@@ -138,23 +137,6 @@ export default function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
-            </div>
-            <div>
-              <label htmlFor="tenantId" className="block text-sm font-medium text-gray-700">
-                Tenant ID (optional)
-              </label>
-              <input
-                id="tenantId"
-                name="tenantId"
-                type="text"
-                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                placeholder="Leave empty to auto-generate"
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                If left empty, a tenant ID will be auto-generated
-              </p>
             </div>
           </div>
 

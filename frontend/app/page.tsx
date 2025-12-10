@@ -1,7 +1,12 @@
+// 10-12-25: Show email instead of username in header
+// 10-12-25: Removed tenant id display from header after login
+// 12-12-25: Added Walkthrough icon to dashboard header
+// 12-12-25: Refreshed dashboard branding for Walkthrough
 // 07-12-25: Added project creation and management UI for Phase 3
 // 15-01-25: Added authentication UI and logout functionality
 'use client';
 
+import Image from 'next/image';
 import { useState } from 'react';
 import FileUpload from '@/components/file-upload';
 import NewProjectModal from '@/components/new-project-modal';
@@ -13,7 +18,7 @@ import { useRouter } from 'next/navigation';
 type View = 'dashboard' | 'editor';
 
 export default function Home() {
-  const { user, tenantId, isLoading, isAuthenticated, logout } = useAuth();
+  const { user, email, isLoading, isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'projects' | 'library'>('projects');
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
@@ -60,29 +65,31 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow">
+    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-indigo-50">
+      <header className="bg-white/80 backdrop-blur border-b border-neutral-200/80 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
-            <div 
-              className="cursor-pointer" 
+            <div
+              className="cursor-pointer flex items-center gap-3"
               onClick={() => view !== 'dashboard' && handleBackToDashboard()}
             >
-              <h1 className="text-2xl font-bold text-gray-900">Video SaaS Platform</h1>
-              <p className="text-sm text-gray-600 mt-1">Generate synchronized video tutorials</p>
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-inner border border-neutral-200">
+                <Image src="/walkthrough-icon.svg" alt="Walkthrough" width={26} height={26} priority />
+              </span>
+              <div>
+                <h1 className="text-2xl font-semibold text-neutral-900">Walkthrough</h1>
+                <p className="text-sm text-neutral-600 mt-1">Guided demos, scripts, and exports</p>
+              </div>
             </div>
             <div className="flex items-center gap-4">
               {user && (
-                <div className="text-sm text-gray-600">
-                  <div className="font-medium">{user.username}</div>
-                  {tenantId && (
-                    <div className="text-xs text-gray-500">Tenant: {tenantId}</div>
-                  )}
+                <div className="text-sm text-neutral-700">
+                  <div className="font-medium">{email ?? user.username}</div>
                 </div>
               )}
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                className="px-4 py-2 text-sm font-semibold text-white bg-neutral-900 rounded-lg shadow-sm hover:bg-neutral-800 transition-colors"
               >
                 Sign out
               </button>
@@ -90,19 +97,19 @@ export default function Home() {
           </div>
         </div>
       </header>
-      
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {view === 'dashboard' ? (
           <>
             {/* Tab Navigation */}
             <div className="flex items-center justify-between mb-6">
-              <div className="flex border-b border-gray-200">
+              <div className="flex border-b border-neutral-200">
                 <button
                   onClick={() => setActiveTab('projects')}
                   className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
                     activeTab === 'projects'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                      ? 'border-neutral-900 text-neutral-900'
+                      : 'border-transparent text-neutral-500 hover:text-neutral-700'
                   }`}
                 >
                   <span className="flex items-center gap-2">
@@ -116,8 +123,8 @@ export default function Home() {
                   onClick={() => setActiveTab('library')}
                   className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
                     activeTab === 'library'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                      ? 'border-neutral-900 text-neutral-900'
+                      : 'border-transparent text-neutral-500 hover:text-neutral-700'
                   }`}
                 >
                   <span className="flex items-center gap-2">
@@ -132,7 +139,7 @@ export default function Home() {
               {activeTab === 'projects' && (
                 <button
                   onClick={() => setShowNewProjectModal(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                  className="px-4 py-2 bg-neutral-900 text-white rounded-lg shadow-sm hover:bg-neutral-800 transition-colors flex items-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" />
@@ -143,12 +150,12 @@ export default function Home() {
             </div>
 
             {/* Content */}
-            <div className="bg-white rounded-lg shadow p-6">
+            <div className="bg-white/90 backdrop-blur rounded-xl shadow-md border border-neutral-200 p-6">
               {activeTab === 'projects' ? (
                 <>
-                  <h2 className="text-xl font-semibold mb-4">Your Projects</h2>
-                  <p className="text-gray-600 mb-6">
-                    Create video tutorials from your PDF guides and Playwright test scripts.
+                  <h2 className="text-xl font-semibold text-neutral-900 mb-2">Projects</h2>
+                  <p className="text-neutral-600 mb-6">
+                    Turn scripts and guides into guided walkthroughs with narration.
                   </p>
                   <ProjectsList 
                     onSelectProject={handleSelectProject}
@@ -157,9 +164,9 @@ export default function Home() {
                 </>
               ) : (
                 <>
-                  <h2 className="text-xl font-semibold mb-4">Asset Library</h2>
-                  <p className="text-gray-600 mb-6">
-                    Upload PDF guides or Playwright test scripts to use in your video projects.
+                  <h2 className="text-xl font-semibold text-neutral-900 mb-2">Asset Library</h2>
+                  <p className="text-neutral-600 mb-6">
+                    Upload source material to keep your demos and scripts in sync.
                   </p>
                   <FileUpload />
                 </>
@@ -167,7 +174,7 @@ export default function Home() {
             </div>
           </>
         ) : (
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white/90 backdrop-blur rounded-xl shadow-md border border-neutral-200 p-6">
             {selectedProjectId && (
               <ScriptEditor 
                 projectId={selectedProjectId} 
