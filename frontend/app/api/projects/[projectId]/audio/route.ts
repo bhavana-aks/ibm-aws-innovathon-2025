@@ -1,3 +1,4 @@
+// 10-12-25: Fixed AWS credentials for Amplify Hosting Compute
 // 07-12-25: Created audio generation API endpoint using Amazon Polly
 import { NextRequest, NextResponse } from 'next/server';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -5,13 +6,27 @@ import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { PollyClient, SynthesizeSpeechCommand, VoiceId, Engine, OutputFormat } from '@aws-sdk/client-polly';
 
-const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.APP_AWS_REGION || 'us-east-1' })
-);
+// Build AWS client config - use explicit credentials only if both are provided
+// In Amplify Hosting Compute, the execution role provides credentials automatically
+const getAwsClientConfig = () => {
+  const config: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+    region: process.env.APP_AWS_REGION || 'us-east-1',
+  };
+  
+  if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
+      accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+    };
+  }
+  
+  return config;
+};
 
-const s3Client = new S3Client({ region: process.env.APP_AWS_REGION || 'us-east-1' });
-
-const pollyClient = new PollyClient({ region: process.env.APP_AWS_REGION || 'us-east-1' });
+const awsConfig = getAwsClientConfig();
+const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(awsConfig));
+const s3Client = new S3Client(awsConfig);
+const pollyClient = new PollyClient(awsConfig);
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';

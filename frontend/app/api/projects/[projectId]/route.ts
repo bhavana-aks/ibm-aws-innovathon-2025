@@ -1,13 +1,28 @@
+// 10-12-25: Fixed AWS credentials for Amplify Hosting Compute
 // 07-12-25: Added Phase 4 fields (audioProgress, durationMap, syncedScriptS3Key)
 // 07-12-25: Created project detail API for fetching and updating projects
 import { NextRequest, NextResponse } from 'next/server';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
-const client = new DynamoDBClient({
-  region: process.env.APP_AWS_REGION || 'us-east-1',
-});
+// Build AWS client config - use explicit credentials only if both are provided
+// In Amplify Hosting Compute, the execution role provides credentials automatically
+const getAwsClientConfig = () => {
+  const config: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+    region: process.env.APP_AWS_REGION || 'us-east-1',
+  };
+  
+  if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
+      accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+    };
+  }
+  
+  return config;
+};
 
+const client = new DynamoDBClient(getAwsClientConfig());
 const docClient = DynamoDBDocumentClient.from(client);
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';

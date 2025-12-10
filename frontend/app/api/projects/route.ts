@@ -1,12 +1,34 @@
+// 10-12-25: Fixed AWS credentials for Amplify Hosting Compute
 // 07-12-25: Created projects API for listing and creating projects
 import { NextRequest, NextResponse } from 'next/server';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 
-const client = new DynamoDBClient({
-  region: process.env.APP_AWS_REGION || 'us-east-1',
-});
+// Build DynamoDB client config
+// In Amplify Hosting Compute, credentials come from the execution role automatically
+// Only use explicit credentials if both are provided (for local dev)
+const getDynamoDBConfig = () => {
+  const config: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+    region: process.env.APP_AWS_REGION || 'us-east-1',
+  };
+  
+  // Only add explicit credentials if BOTH are provided (local development)
+  // In Amplify Hosting, the execution role provides credentials automatically
+  if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
+      accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+    };
+    console.log('Using explicit AWS credentials');
+  } else {
+    console.log('Using default credential chain (IAM role)');
+  }
+  
+  return config;
+};
+
+const client = new DynamoDBClient(getDynamoDBConfig());
 
 const docClient = DynamoDBDocumentClient.from(client);
 

@@ -1,3 +1,4 @@
+// 10-12-25: Fixed AWS credentials for Amplify Hosting Compute
 // 10-12-25: Updated to enforce 1:1 manifest-script correspondence for audio sync
 // 07-12-25: Created script generation API endpoint (Bedrock integration)
 import { NextRequest, NextResponse } from 'next/server';
@@ -6,13 +7,27 @@ import { DynamoDBDocumentClient, GetCommand, UpdateCommand, QueryCommand } from 
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 
-const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.APP_AWS_REGION || 'us-east-1' })
-);
+// Build AWS client config - use explicit credentials only if both are provided
+// In Amplify Hosting Compute, the execution role provides credentials automatically
+const getAwsClientConfig = () => {
+  const config: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+    region: process.env.APP_AWS_REGION || 'us-east-1',
+  };
+  
+  if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
+      accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+    };
+  }
+  
+  return config;
+};
 
-const s3Client = new S3Client({ region: process.env.APP_AWS_REGION || 'us-east-1' });
-
-const bedrockClient = new BedrockRuntimeClient({ region: process.env.APP_AWS_REGION || 'us-east-1' });
+const awsConfig = getAwsClientConfig();
+const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(awsConfig));
+const s3Client = new S3Client(awsConfig);
+const bedrockClient = new BedrockRuntimeClient(awsConfig);
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';

@@ -1,3 +1,4 @@
+// 10-12-25: Fixed AWS credentials for Amplify Hosting Compute
 // 08-12-25: Fix video file extension handling - support both mp4 and webm
 // 07-12-25: Created video recording API endpoint for Phase 5
 import { NextRequest, NextResponse } from 'next/server';
@@ -7,12 +8,27 @@ import { ECSClient, RunTaskCommand, DescribeTasksCommand } from '@aws-sdk/client
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.APP_AWS_REGION || 'us-east-1' })
-);
+// Build AWS client config - use explicit credentials only if both are provided
+// In Amplify Hosting Compute, the execution role provides credentials automatically
+const getAwsClientConfig = () => {
+  const config: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+    region: process.env.APP_AWS_REGION || 'us-east-1',
+  };
+  
+  if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
+      accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+    };
+  }
+  
+  return config;
+};
 
-const ecsClient = new ECSClient({ region: process.env.APP_AWS_REGION || 'us-east-1' });
-const s3Client = new S3Client({ region: process.env.APP_AWS_REGION || 'us-east-1' });
+const awsConfig = getAwsClientConfig();
+const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(awsConfig));
+const ecsClient = new ECSClient(awsConfig);
+const s3Client = new S3Client(awsConfig);
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';
@@ -21,11 +37,12 @@ const ECS_TASK_DEFINITION = process.env.ECS_TASK_FAMILY || 'video-saas-recorder'
 const ECS_SUBNETS = process.env.ECS_SUBNETS?.split(',').filter(s => s.trim()) || [];
 const ECS_SECURITY_GROUPS = process.env.ECS_SECURITY_GROUPS?.split(',').filter(s => s.trim()) || [];
 
-// Debug logging
+// Debug logging for environment variables
 console.log('=== ECS Config Debug ===');
 console.log('S3_BUCKET:', S3_BUCKET ? 'SET' : 'EMPTY');
 console.log('ECS_SUBNETS:', ECS_SUBNETS.length, ECS_SUBNETS);
 console.log('ECS_SECURITY_GROUPS:', ECS_SECURITY_GROUPS.length, ECS_SECURITY_GROUPS);
+console.log('Using explicit credentials:', !!(process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY));
 console.log('========================');
 
 interface VideoGenerationRequest {

@@ -8,6 +8,9 @@ applications:
             - npm ci
         build:
           commands:
+            # Export all environment variables for Next.js build
+            - echo "Building with environment variables..."
+            - printenv | grep -E '^(APP_|S3_|DYNAMODB_|ECS_|NEXT_)' || true
             - npm run build
       artifacts:
         baseDirectory: .next
@@ -17,4 +20,19 @@ applications:
         paths:
           - node_modules/**/*
           - .next/cache/**/*
+      buildEnvironmentVariables:
+        # These are exposed during build time
+        NODE_ENV: production
+      serverSideEnvironmentVariables:
+        # These are exposed at runtime for SSR/API routes
+        APP_AWS_REGION: ${APP_AWS_REGION}
+        APP_AWS_ACCESS_KEY_ID: ${APP_AWS_ACCESS_KEY_ID}
+        APP_AWS_SECRET_ACCESS_KEY: ${APP_AWS_SECRET_ACCESS_KEY}
+        S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+        DYNAMODB_TABLE_NAME: ${DYNAMODB_TABLE_NAME}
+        ECS_CLUSTER_NAME: ${ECS_CLUSTER_NAME}
+        ECS_TASK_FAMILY: ${ECS_TASK_FAMILY}
+        ECS_SUBNETS: ${ECS_SUBNETS}
+        ECS_SECURITY_GROUPS: ${ECS_SECURITY_GROUPS}
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL}
 
