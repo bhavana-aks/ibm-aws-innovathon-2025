@@ -302,106 +302,123 @@ export async function GET(
 
     // Check ECS task status if VIDEO_GENERATING
     let taskStatus = null;
-    if (project.status === 'VIDEO_GENERATING' && project.videoProgress?.taskArn && ECS_CLUSTER) {
-      try {
-        const describeResult = await ecsClient.send(new DescribeTasksCommand({
-          cluster: ECS_CLUSTER,
-          tasks: [project.videoProgress.taskArn],
-        }));
+    if (project.status === 'VIDEO_GENERATING') {
+      // First, check if video file already exists in S3 (could have been uploaded by ECS task)
+      if (S3_BUCKET) {
+        const possibleKeys = [
+          `videos/${cleanTenantId}/${projectId}/recording.webm`,
+          `videos/${cleanTenantId}/${projectId}/recording.mp4`,
+        ];
         
-        const task = describeResult.tasks?.[0];
-        if (task) {
-          taskStatus = {
-            lastStatus: task.lastStatus,
-            desiredStatus: task.desiredStatus,
-            stoppedReason: task.stoppedReason,
-            stoppedAt: task.stoppedAt?.toISOString(),
-          };
-
-          // If task stopped, check if it completed successfully
-          if (task.lastStatus === 'STOPPED') {
-            const containerExitCode = task.containers?.[0]?.exitCode;
+        for (const key of possibleKeys) {
+          try {
+            await s3Client.send(new GetObjectCommand({
+              Bucket: S3_BUCKET,
+              Key: key,
+            }));
             
-            if (containerExitCode === 0) {
-              // Task completed successfully - check for both mp4 and webm files
-              // Playwright records webm by default, so check both extensions
-              const possibleKeys = [
-                `videos/${cleanTenantId}/${projectId}/recording.webm`,
-                `videos/${cleanTenantId}/${projectId}/recording.mp4`,
-              ];
-              
-              // Find which video file exists
-              let videoS3Key = possibleKeys[0]; // Default to webm (Playwright default)
-              for (const key of possibleKeys) {
-                try {
-                  await s3Client.send(new GetObjectCommand({
-                    Bucket: S3_BUCKET,
-                    Key: key,
-                  }));
-                  videoS3Key = key;
-                  console.log(`Found video at: ${key}`);
-                  break;
-                } catch {
-                  // File doesn't exist, try next
-                }
-              }
-              
-              await dynamoClient.send(new UpdateCommand({
-                TableName: TABLE_NAME,
-                Key: {
-                  PK: formattedTenantId,
-                  SK: `PROJ#${projectId}`,
+            // Video file exists! Update status to COMPLETE
+            console.log(`Found video at: ${key} - marking as COMPLETE`);
+            
+            await dynamoClient.send(new UpdateCommand({
+              TableName: TABLE_NAME,
+              Key: {
+                PK: formattedTenantId,
+                SK: `PROJ#${projectId}`,
+              },
+              UpdateExpression: 'SET #status = :status, #videoS3Key = :videoS3Key, #videoProgress = :videoProgress, #updatedAt = :updatedAt',
+              ExpressionAttributeNames: {
+                '#status': 'status',
+                '#videoS3Key': 'videoS3Key',
+                '#videoProgress': 'videoProgress',
+                '#updatedAt': 'updatedAt',
+              },
+              ExpressionAttributeValues: {
+                ':status': 'COMPLETE',
+                ':videoS3Key': key,
+                ':videoProgress': {
+                  stage: 'COMPLETE',
+                  completedAt: new Date().toISOString(),
                 },
-                UpdateExpression: 'SET #status = :status, #videoS3Key = :videoS3Key, #videoProgress = :videoProgress, #updatedAt = :updatedAt',
-                ExpressionAttributeNames: {
-                  '#status': 'status',
-                  '#videoS3Key': 'videoS3Key',
-                  '#videoProgress': 'videoProgress',
-                  '#updatedAt': 'updatedAt',
-                },
-                ExpressionAttributeValues: {
-                  ':status': 'COMPLETE',
-                  ':videoS3Key': videoS3Key,
-                  ':videoProgress': {
-                    stage: 'COMPLETE',
-                    completedAt: new Date().toISOString(),
-                  },
-                  ':updatedAt': new Date().toISOString(),
-                },
-              }));
+                ':updatedAt': new Date().toISOString(),
+              },
+            }));
 
-              // Regenerate response with updated status
-              return NextResponse.json({
-                status: 'COMPLETE',
-                videoS3Key,
-                videoProgress: { stage: 'COMPLETE' },
-                taskStatus,
-              });
-            } else {
-              // Task failed
-              await dynamoClient.send(new UpdateCommand({
-                TableName: TABLE_NAME,
-                Key: {
-                  PK: formattedTenantId,
-                  SK: `PROJ#${projectId}`,
-                },
-                UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage, #updatedAt = :updatedAt',
-                ExpressionAttributeNames: {
-                  '#status': 'status',
-                  '#errorMessage': 'errorMessage',
-                  '#updatedAt': 'updatedAt',
-                },
-                ExpressionAttributeValues: {
-                  ':status': 'ERROR',
-                  ':errorMessage': task.stoppedReason || 'Video recording task failed',
-                  ':updatedAt': new Date().toISOString(),
-                },
-              }));
-            }
+            // Generate signed URL for the video
+            const command = new GetObjectCommand({
+              Bucket: S3_BUCKET,
+              Key: key,
+            });
+            const signedVideoUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+
+            return NextResponse.json({
+              status: 'COMPLETE',
+              videoS3Key: key,
+              videoUrl: signedVideoUrl,
+              videoProgress: { stage: 'COMPLETE', completedAt: new Date().toISOString() },
+              taskStatus,
+              durationMap: project.durationMap || null,
+            });
+          } catch {
+            // File doesn't exist at this key, continue checking
           }
         }
-      } catch (ecsError) {
-        console.warn('Could not check ECS task status:', ecsError);
+      }
+      
+      // If we have an ECS task ARN, check its status
+      if (project.videoProgress?.taskArn && ECS_CLUSTER) {
+        try {
+          const describeResult = await ecsClient.send(new DescribeTasksCommand({
+            cluster: ECS_CLUSTER,
+            tasks: [project.videoProgress.taskArn],
+          }));
+          
+          const task = describeResult.tasks?.[0];
+          if (task) {
+            taskStatus = {
+              lastStatus: task.lastStatus,
+              desiredStatus: task.desiredStatus,
+              stoppedReason: task.stoppedReason,
+              stoppedAt: task.stoppedAt?.toISOString(),
+            };
+
+            // If task stopped but failed (video not found above means it failed)
+            if (task.lastStatus === 'STOPPED') {
+              const containerExitCode = task.containers?.[0]?.exitCode;
+              
+              if (containerExitCode !== 0) {
+                // Task failed
+                await dynamoClient.send(new UpdateCommand({
+                  TableName: TABLE_NAME,
+                  Key: {
+                    PK: formattedTenantId,
+                    SK: `PROJ#${projectId}`,
+                  },
+                  UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage, #updatedAt = :updatedAt',
+                  ExpressionAttributeNames: {
+                    '#status': 'status',
+                    '#errorMessage': 'errorMessage',
+                    '#updatedAt': 'updatedAt',
+                  },
+                  ExpressionAttributeValues: {
+                    ':status': 'ERROR',
+                    ':errorMessage': task.stoppedReason || 'Video recording task failed',
+                    ':updatedAt': new Date().toISOString(),
+                  },
+                }));
+                
+                return NextResponse.json({
+                  status: 'ERROR',
+                  errorMessage: task.stoppedReason || 'Video recording task failed',
+                  videoProgress: project.videoProgress,
+                  taskStatus,
+                });
+              }
+            }
+          }
+        } catch (ecsError) {
+          console.warn('Could not check ECS task status:', ecsError);
+        }
       }
     }
 
