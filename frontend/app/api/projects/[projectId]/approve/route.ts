@@ -5,10 +5,10 @@ import { DynamoDBDocumentClient, UpdateCommand, GetCommand } from '@aws-sdk/lib-
 import { SFNClient, SendTaskSuccessCommand } from '@aws-sdk/client-sfn';
 
 const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' })
+  new DynamoDBClient({ region: process.env.APP_AWS_REGION || 'us-east-1' })
 );
 
-const sfnClient = new SFNClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const sfnClient = new SFNClient({ region: process.env.APP_AWS_REGION || 'us-east-1' });
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 

@@ -8,12 +8,12 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 
 const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' })
+  new DynamoDBClient({ region: process.env.APP_AWS_REGION || 'us-east-1' })
 );
 
-const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+const s3Client = new S3Client({ region: process.env.APP_AWS_REGION || 'us-east-1' });
 
-const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const bedrockClient = new BedrockRuntimeClient({ region: process.env.APP_AWS_REGION || 'us-east-1' });
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';
@@ -376,7 +376,7 @@ export async function POST(
     }
 
     let syncedScript: string;
-    const useMock = !process.env.AWS_ACCESS_KEY_ID || 
+    const useMock = !process.env.APP_AWS_ACCESS_KEY_ID || 
                    process.env.USE_MOCK_BEDROCK === 'true' ||
                    !S3_BUCKET;
 

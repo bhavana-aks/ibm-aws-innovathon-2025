@@ -8,11 +8,11 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' })
+  new DynamoDBClient({ region: process.env.APP_AWS_REGION || 'us-east-1' })
 );
 
-const ecsClient = new ECSClient({ region: process.env.AWS_REGION || 'us-east-1' });
-const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+const ecsClient = new ECSClient({ region: process.env.APP_AWS_REGION || 'us-east-1' });
+const s3Client = new S3Client({ region: process.env.APP_AWS_REGION || 'us-east-1' });
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';
