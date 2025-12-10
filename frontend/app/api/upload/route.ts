@@ -1,15 +1,22 @@
 // 15-01-25: Added better error handling for presigned URL generation
+// 10-12-25: Use default credential chain for Amplify IAM role support
 import { NextRequest, NextResponse } from 'next/server';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-const s3Client = new S3Client({ 
+// Build credentials only if explicitly provided, otherwise use default chain
+const clientConfig: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
   region: process.env.APP_AWS_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY || '',
-  },
-});
+};
+
+if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+  clientConfig.credentials = {
+    accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+  };
+}
+
+const s3Client = new S3Client(clientConfig);
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || '';
 

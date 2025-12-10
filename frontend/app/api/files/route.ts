@@ -1,18 +1,23 @@
 // 07-12-25: Fixed POST to format tenantId with TENANT# prefix for consistency with GET
 // 07-12-25: Added GET method for listing files
+// 10-12-25: Use default credential chain for Amplify IAM role support
 import { NextRequest, NextResponse } from 'next/server';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 
-const dynamoClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({
-    region: process.env.APP_AWS_REGION || 'us-east-1',
-    credentials: {
-      accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID || '',
-      secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY || '',
-    },
-  })
-);
+// Build credentials only if explicitly provided, otherwise use default chain
+const clientConfig: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+  region: process.env.APP_AWS_REGION || 'us-east-1',
+};
+
+if (process.env.APP_AWS_ACCESS_KEY_ID && process.env.APP_AWS_SECRET_ACCESS_KEY) {
+  clientConfig.credentials = {
+    accessKeyId: process.env.APP_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.APP_AWS_SECRET_ACCESS_KEY,
+  };
+}
+
+const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient(clientConfig));
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 
