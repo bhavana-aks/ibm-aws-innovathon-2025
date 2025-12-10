@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+Add documents (.md) files only to the docs folder. 
