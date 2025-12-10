@@ -21,8 +21,8 @@ applications:
             - echo "NEXT_PUBLIC_AWS_REGION=$NEXT_PUBLIC_AWS_REGION" >> .env.production
             - echo "NEXT_PUBLIC_COGNITO_USER_POOL_ID=$NEXT_PUBLIC_COGNITO_USER_POOL_ID" >> .env.production
             - echo "NEXT_PUBLIC_COGNITO_CLIENT_ID=$NEXT_PUBLIC_COGNITO_CLIENT_ID" >> .env.production
-            # Debug: show what was written
-            - cat .env.production
+          # Debug: show what was written
+          #  - cat .env.production
         build:
           commands:
             - npm run build
