@@ -95,8 +95,16 @@ export async function POST(
     });
   } catch (error) {
     console.error('Error approving script:', error);
+    
+    // Provide more detailed error info
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorName = error instanceof Error ? error.name : 'Error';
+    
     return NextResponse.json(
-      { error: 'Failed to approve script' },
+      { 
+        error: 'Failed to approve script',
+        details: `${errorName}: ${errorMessage}`,
+      },
       { status: 500 }
     );
   }

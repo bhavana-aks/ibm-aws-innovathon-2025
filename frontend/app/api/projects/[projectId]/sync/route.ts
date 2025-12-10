@@ -1,3 +1,4 @@
+// 10-12-25: Fixed to match manifest code_action to script lines for proper narration sync
 // 08-12-25: Updated to use __STEP_META__ format for post-recording audio muxing
 // 07-12-25: Created script synchronizer API endpoint using Bedrock
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,27 +18,33 @@ const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';
 
-// 09-12-25: Improved prompt - sequential assignment, ignore code_action matching
-const SYNC_SYSTEM_PROMPT = `You are a Playwright Script Annotator. Your ONLY job is to add step metadata comments.
+// 10-12-25: Updated prompt to match code_action from manifest to script lines
+const SYNC_SYSTEM_PROMPT = `You are a Playwright Script Annotator. Your job is to add step metadata comments that match manifest entries to script lines.
 
 CRITICAL INSTRUCTION:
-Do NOT try to match code_actions from the manifest. Instead, simply:
-1. Find ALL executable lines (lines with "await page." or "await expect")
-2. Add step annotations in SEQUENTIAL order: step 1 before first action, step 2 before second action, etc.
+Match each manifest entry's code_action to the corresponding script line. The narration for each step must play during the correct action.
 
 INPUTS PROVIDED:
 - ORIGINAL_SCRIPT: The Playwright test to annotate
+- MANIFEST: Array of {step_id, code_action, narration} - use code_action to find matching lines
 - DURATION_MAP: Maps step numbers to audio durations in milliseconds
-- MANIFEST: Ignore the code_action field. Only use step_id and duration.
 
 ALGORITHM:
-1. Read the script top to bottom
-2. Count executable actions (await page.*, await expect.*)
-3. Before action #1, add: // __STEP_META__: {"stepId": 1, "audioDuration": <duration from map>}
-4. Before action #2, add: // __STEP_META__: {"stepId": 2, "audioDuration": <duration from map>}
-5. Continue until all actions are annotated or you run out of step_ids
+1. For each manifest entry (in order):
+   a. Find the script line that matches the code_action (partial match OK - match the action type and selector)
+   b. Add step annotation BEFORE that line with the step_id and audioDuration
+2. If a manifest entry's code_action doesn't match any script line, SKIP that step
+3. Do NOT add annotations for script lines that have no matching manifest entry
+
+MATCHING RULES:
+- "page.goto" matches lines containing "page.goto"
+- "page.fill('#username')" matches lines with "fill" and "username" 
+- "page.click('#submit')" matches lines with "click" and "submit"
+- Focus on the ACTION TYPE (goto, fill, click, etc.) and KEY IDENTIFIERS (username, password, submit, etc.)
 
 CORRECT OUTPUT EXAMPLE:
+Given manifest: [{step_id: 1, code_action: "page.goto(...)"}, {step_id: 2, code_action: "page.fill('#username')"}]
+
 import { test, expect } from '@playwright/test';
 
 test('Example', async ({ page }) => {
@@ -45,26 +52,14 @@ test('Example', async ({ page }) => {
   await page.goto('https://example.com');
 
   // __STEP_META__: {"stepId": 2, "audioDuration": 2800}
-  await page.locator('#user').fill('test');
-
-  // __STEP_META__: {"stepId": 3, "audioDuration": 1500}
-  await page.locator('#btn').click();
-
-  // __STEP_META__: {"stepId": 4, "audioDuration": 2000}
-  await expect(page).toHaveURL('/dashboard');
+  await page.locator('[data-test="username"]').fill('test');
 });
 
-WRONG - Out of order (NEVER do this):
-// __STEP_META__: {"stepId": 1, ...}
-await page.goto(...);
-// __STEP_META__: {"stepId": 14, ...}  <-- WRONG! Should be stepId: 2
-await page.fill(...);
-
 RULES:
-1. stepId MUST go 1, 2, 3, 4, 5... in order. NEVER skip or jump.
-2. ONE annotation per action. Never put two annotations before one action.
-3. Keep all original code exactly as-is.
-4. Use {"stepId": N} format with double quotes.
+1. stepId comes from the manifest's step_id field
+2. Only annotate lines that have a matching code_action in the manifest
+3. Keep all original code exactly as-is
+4. Use {"stepId": N} format with double quotes
 5. Return ONLY the annotated code. No explanations.`;
 
 async function getFileContent(s3Key: string): Promise<string> {
@@ -86,25 +81,31 @@ async function syncScriptWithBedrock(
   durationMap: Record<number, number>,
   manifest: Array<{ step_id: number; code_action: string; narration: string }>
 ): Promise<string> {
-  // Sort manifest by step_id and create a simple duration lookup
+  // Sort manifest by step_id
   const sortedManifest = [...manifest].sort((a, b) => a.step_id - b.step_id);
+  
+  // Build manifest info for matching
+  const manifestInfo = sortedManifest.map(step => ({
+    step_id: step.step_id,
+    code_action: step.code_action,
+    audioDuration: durationMap[step.step_id] || 2000,
+    narration_preview: step.narration.substring(0, 50)
+  }));
   
   const prompt = `ORIGINAL_SCRIPT:
 \`\`\`typescript
 ${originalScript}
 \`\`\`
 
-DURATION_MAP (step number -> audio duration in ms):
-${JSON.stringify(durationMap, null, 2)}
-
-NUMBER OF STEPS: ${sortedManifest.length}
+MANIFEST (match code_action to script lines):
+${JSON.stringify(manifestInfo, null, 2)}
 
 INSTRUCTIONS:
-1. Find each "await page." or "await expect" line in the script (top to bottom)
-2. Before the 1st action, add: // __STEP_META__: {"stepId": 1, "audioDuration": ${durationMap[1] || 2000}}
-3. Before the 2nd action, add: // __STEP_META__: {"stepId": 2, "audioDuration": ${durationMap[2] || 2000}}
-4. Continue sequentially: 1, 2, 3, 4, 5... until step ${sortedManifest.length}
-5. NEVER use stepId 14 before stepId 2, 3, 4, etc. Order must be sequential!
+1. For each manifest entry, find the matching script line by comparing code_action
+2. Add // __STEP_META__: {"stepId": <step_id>, "audioDuration": <audioDuration>} BEFORE the matching line
+3. Match by action type (goto, fill, click) and key identifiers (username, password, submit, etc.)
+4. If no match found for a manifest entry, skip it
+5. Keep the original script code exactly as-is
 
 Return ONLY the annotated TypeScript code.`;
 
@@ -144,6 +145,102 @@ Return ONLY the annotated TypeScript code.`;
   }
 }
 
+/**
+ * Extract key identifiers from a code action for matching
+ * e.g., "page.fill('#username', 'test')" -> ['fill', 'username']
+ */
+function extractActionKeys(codeAction: string): string[] {
+  const keys: string[] = [];
+  
+  // Extract action type (goto, fill, click, etc.)
+  const actionMatch = codeAction.match(/\.(goto|fill|click|type|press|check|uncheck|select|hover|focus)\s*\(/i);
+  if (actionMatch) {
+    keys.push(actionMatch[1].toLowerCase());
+  }
+  
+  // Extract expect actions
+  const expectMatch = codeAction.match(/expect.*\.(toHaveURL|toHaveText|toBeVisible|toContain)/i);
+  if (expectMatch) {
+    keys.push('expect', expectMatch[1].toLowerCase());
+  }
+  
+  // Extract key identifiers from selectors
+  const identifiers = ['username', 'password', 'email', 'login', 'submit', 'checkout', 'cart', 
+                       'firstName', 'lastName', 'postalCode', 'continue', 'finish', 'backpack',
+                       'inventory', 'complete', 'header'];
+  for (const id of identifiers) {
+    if (codeAction.toLowerCase().includes(id.toLowerCase())) {
+      keys.push(id.toLowerCase());
+    }
+  }
+  
+  return keys;
+}
+
+/**
+ * Check if a script line matches a manifest code_action
+ */
+function lineMatchesAction(scriptLine: string, codeAction: string): boolean {
+  const actionKeys = extractActionKeys(codeAction);
+  const lineKeys = extractActionKeys(scriptLine);
+  
+  if (actionKeys.length === 0 || lineKeys.length === 0) return false;
+  
+  // Must match action type (first key is usually the action)
+  const actionType = actionKeys[0];
+  if (!lineKeys.includes(actionType)) return false;
+  
+  // Must match at least one identifier if present
+  const actionIdentifiers = actionKeys.slice(1);
+  const lineIdentifiers = lineKeys.slice(1);
+  
+  if (actionIdentifiers.length === 0) return true; // Only action type needed
+  
+  // Check if any identifier matches
+  return actionIdentifiers.some(id => lineIdentifiers.includes(id));
+}
+
+/**
+ * Annotate an original script by matching manifest code_actions to script lines
+ */
+function annotateOriginalScript(
+  originalScript: string,
+  durationMap: Record<number, number>,
+  manifest: Array<{ step_id: number; code_action: string; narration: string }>
+): string {
+  const lines = originalScript.split('\n');
+  const annotatedLines: string[] = [];
+  const sortedManifest = [...manifest].sort((a, b) => a.step_id - b.step_id);
+  
+  // Track which manifest steps have been matched
+  const matchedSteps = new Set<number>();
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+    
+    // Check if this line is an executable action
+    if (trimmedLine.startsWith('await page.') || trimmedLine.startsWith('await expect')) {
+      // Find matching manifest entry
+      for (const step of sortedManifest) {
+        if (matchedSteps.has(step.step_id)) continue;
+        
+        if (lineMatchesAction(trimmedLine, step.code_action)) {
+          const audioDuration = durationMap[step.step_id] || 2000;
+          const indent = line.match(/^(\s*)/)?.[1] || '  ';
+          annotatedLines.push(`${indent}// __STEP_META__: {"stepId": ${step.step_id}, "audioDuration": ${audioDuration}}`);
+          matchedSteps.add(step.step_id);
+          break;
+        }
+      }
+    }
+    
+    annotatedLines.push(line);
+  }
+  
+  return annotatedLines.join('\n');
+}
+
 // Generate a synchronized script with step metadata for post-recording audio muxing
 function generateMockSyncedScript(
   originalScript: string | null,
@@ -151,15 +248,26 @@ function generateMockSyncedScript(
   manifest: Array<{ step_id: number; code_action: string; narration: string }>,
   projectId: string
 ): string {
-  // Generate step metadata comments instead of audio playback/waitForTimeout
-  // Audio will be muxed after recording based on timestamps
-  const stepsCode = manifest.map((step) => {
+  // If we have an original script, annotate it by matching code_actions
+  if (originalScript && originalScript.trim()) {
+    console.log('Annotating original script with manifest code_action matching');
+    return annotateOriginalScript(originalScript, durationMap, manifest);
+  }
+  
+  // Fallback: Generate script from manifest (used when no original script)
+  // Only include manifest entries that have valid code_actions
+  const validSteps = manifest.filter(step => 
+    step.code_action && 
+    (step.code_action.includes('page.') || step.code_action.includes('expect'))
+  );
+  
+  const stepsCode = validSteps.map((step) => {
     const audioDuration = durationMap[step.step_id] || 2000;
     const codeAction = step.code_action.startsWith('await') 
       ? step.code_action 
       : `await ${step.code_action}`;
     
-    return `  // __STEP_META__: { stepId: ${step.step_id}, audioDuration: ${audioDuration} }
+    return `  // __STEP_META__: {"stepId": ${step.step_id}, "audioDuration": ${audioDuration}}
   ${codeAction};`;
   }).join('\n\n');
 
@@ -171,7 +279,7 @@ function generateMockSyncedScript(
  * This script uses __STEP_META__ comments to mark steps for audio synchronization.
  * Audio is muxed AFTER recording based on actual step execution timestamps.
  * 
- * Format: // __STEP_META__: { stepId: N, audioDuration: Nms }
+ * Format: // __STEP_META__: {"stepId": N, "audioDuration": Nms}
  */
 
 test('Synchronized Video Recording - Project ${projectId}', async ({ page }) => {

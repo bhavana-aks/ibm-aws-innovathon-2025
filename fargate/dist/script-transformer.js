@@ -1,4 +1,5 @@
 "use strict";
+// 10-12-25: Fixed timing - set _scriptStartTime at first step execution, not module load
 // 09-12-25: Keep script start timestamp stable across tests to avoid overlapping audio
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.transformScript = transformScript;
@@ -14,11 +15,14 @@ function transformScript(scriptContent) {
 // === INJECTED HELPER CODE ===
 let _lastStepStart = Date.now();
 let _lastAudioDuration = 0;
-let _scriptStartTime = Date.now();
+let _scriptStartTime = 0;  // Will be set at first step execution
+let _firstStepExecuted = false;
 
 function _resetTimer() {
     _lastStepStart = Date.now();
     _lastAudioDuration = 0;
+    _scriptStartTime = 0;  // Reset for fresh calculation
+    _firstStepExecuted = false;  // Allow re-initialization
     console.log('Timer reset for video synchronization');
 }
 
@@ -31,6 +35,16 @@ async function _waitForFinalAudio(page: any) {
 }
 
 async function _syncStep(page: any, stepId: number, audioDuration: number) {
+    // On first step, establish the base time AFTER video has started recording
+    if (!_firstStepExecuted) {
+        // Small stabilization delay to ensure video recording is stable
+        await page.waitForTimeout(100);
+        _scriptStartTime = Date.now();
+        _firstStepExecuted = true;
+        console.log('__VIDEO_START__:' + _scriptStartTime);
+        console.log('Video sync base time established at first step');
+    }
+
     const now = Date.now();
     // If there was a previous step, check if we need to wait
     if (_lastAudioDuration > 0) {
@@ -43,7 +57,7 @@ async function _syncStep(page: any, stepId: number, audioDuration: number) {
         }
     }
 
-    // Log timing for post-processing - Log AFTER waiting so timestamp reflects actual start
+    // Log timing for post-processing - timestamp is now relative to first step execution
     const stepStartRel = Date.now() - _scriptStartTime;
     console.log('__TIMING__:' + JSON.stringify({ 
         stepId, 

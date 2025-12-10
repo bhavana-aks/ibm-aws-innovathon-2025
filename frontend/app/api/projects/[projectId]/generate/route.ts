@@ -1,3 +1,4 @@
+// 10-12-25: Updated to enforce 1:1 manifest-script correspondence for audio sync
 // 07-12-25: Created script generation API endpoint (Bedrock integration)
 import { NextRequest, NextResponse } from 'next/server';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -16,42 +17,66 @@ const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION 
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';
 
-// The "Mega-Prompt" for script generation
-const SYSTEM_PROMPT = `You are an expert Technical Video Director.
+// 10-12-25: Updated prompt to let Bedrock extract actions and filter out setup steps
+const SYSTEM_PROMPT = `You are an expert Technical Video Director and Playwright expert.
 
 INPUTS:
 1. USER_PROMPT: The user's directive for how to create the video
-2. CONTEXT_DOCS: The PDF content (user guide documentation)
-3. CODE_STEPS: List of Playwright actions from test scripts
+2. CONTEXT_DOCS: The PDF content (user guide documentation)  
+3. RAW_SCRIPT: The complete Playwright test script
 
-YOUR GOAL:
-Create a JSON manifest for a video narration.
+YOUR TASK:
+1. FIRST: Extract only USER-FACING ACTIONS from the script (in order of appearance)
+2. THEN: Create exactly ONE narration per action
 
-RULES:
-1. FILTERING: If USER_PROMPT says "skip" or "fast" for a section, write a very short, summary voiceover (e.g., "Log in quickly...").
-2. FOCUS: If USER_PROMPT says "focus on X", write a detailed voiceover for those specific steps, referencing the CONTEXT_DOCS for explanation.
-3. SYNC: Map every "narration" to a specific "code_step_id".
-4. TONE: Adapt the writing style to match the USER_PROMPT (e.g., Professional vs. Casual).
-5. LANGUAGE: Use natural, user-friendly language. DO NOT mention technical details like HTML selectors, attributes (e.g. data-test), or function names. Describe the user action instead (e.g. "Enter your password" instead of "Fill password field").
-6. OUTPUT: Return ONLY a valid JSON array with no additional text.
+ACTIONS TO INCLUDE (user-facing actions that should have narration):
+- page.goto() - navigation to a URL
+- page.click(), page.locator().click() - clicking buttons/links
+- page.fill(), page.locator().fill() - filling form inputs
+- page.type(), page.locator().type() - typing text
+- expect() assertions - verifications the user should see
+- page.check(), page.uncheck() - checkbox interactions
+- page.selectOption() - dropdown selections
 
-OUTPUT FORMAT (JSON array):
+ACTIONS TO EXCLUDE (setup/utility - NO narration needed):
+- page.setViewportSize() - viewport setup
+- page.waitForTimeout() - artificial delays
+- page.waitForLoadState() - page load waits
+- page.waitForSelector() - element waits  
+- page.screenshot() - screenshots
+- console.log() - logging
+- Any line inside test setup/teardown hooks
+
+CRITICAL RULES:
+1. Extract the EXACT code line from the script for code_action (include "await" if present)
+2. Do NOT create "transition" narrations like "The page has loaded" or "The site is now ready"
+3. Do NOT invent actions - only use what exists in the script
+4. step_id starts at 1 and increments for each included action
+5. Order must match the script execution order
+
+NARRATION RULES:
+1. Use natural, user-friendly language
+2. Do NOT mention technical selectors (data-test, #id, .class, etc.)
+3. Describe WHAT the user is doing, not HOW the code works
+4. Keep narrations concise (1-2 sentences max)
+
+OUTPUT FORMAT (JSON array only, no other text):
 [
   {
     "step_id": 1,
-    "code_action": "click('#login')",
-    "narration": "First, log in to the system.",
+    "code_action": "await page.goto('https://example.com')",
+    "narration": "Navigate to the application.",
     "importance": "low"
   },
   {
     "step_id": 2,
-    "code_action": "click('#submit')",
-    "narration": "Here is the critical part. When you click submit without data, notice the red validation error.",
-    "importance": "high"
+    "code_action": "await page.locator('[data-test=\"username\"]').fill('user')",
+    "narration": "Enter your username.",
+    "importance": "medium"
   }
 ]
 
-importance values: "low", "medium", or "high"`;
+importance: "low" (setup), "medium" (main flow), "high" (critical actions/verifications)`;
 
 async function getFileContent(s3Key: string): Promise<string> {
   try {
@@ -69,38 +94,63 @@ async function getFileContent(s3Key: string): Promise<string> {
   }
 }
 
+/**
+ * Extract Playwright actions from code in ORDER
+ * Returns actions in the order they appear in the script
+ */
 async function extractPlaywrightSteps(code: string): Promise<string[]> {
-  // Simple extraction of Playwright actions from code
-  const actionPatterns = [
-    /page\.(click|fill|type|press|goto|check|uncheck|select|hover|focus)\s*\([^)]+\)/g,
-    /await\s+page\.\w+\([^)]+\)/g,
-    /expect\([^)]+\)\.\w+\([^)]*\)/g,
-  ];
-
+  const lines = code.split('\n');
   const actions: string[] = [];
-  for (const pattern of actionPatterns) {
-    const matches = code.match(pattern) || [];
-    actions.push(...matches);
+  
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    
+    // Skip empty lines, comments, and non-action lines
+    if (!trimmedLine || trimmedLine.startsWith('//') || trimmedLine.startsWith('/*')) {
+      continue;
+    }
+    
+    // Match page actions (in order of appearance) - exclude setup actions
+    if (trimmedLine.match(/await\s+page\.(goto|click|fill|type|press|check|uncheck|select|hover|focus|locator)\s*\(/)) {
+      // Clean up the action - extract the meaningful part
+      const actionMatch = trimmedLine.match(/await\s+(page\.[^;]+)/);
+      if (actionMatch) {
+        actions.push(actionMatch[1].replace(/;?\s*$/, ''));
+      }
+    }
+    // Match expect assertions
+    else if (trimmedLine.match(/await\s+expect\s*\(/)) {
+      const expectMatch = trimmedLine.match(/await\s+(expect\([^;]+)/);
+      if (expectMatch) {
+        actions.push(expectMatch[1].replace(/;?\s*$/, ''));
+      }
+    }
   }
 
-  // Deduplicate and limit
-  return [...new Set(actions)].slice(0, 50);
+  // Limit but preserve order
+  return actions.slice(0, 50);
 }
 
 async function generateScriptWithBedrock(
   userPrompt: string,
   contextDocs: string,
-  codeSteps: string[]
+  rawScript: string
 ): Promise<any[]> {
   const prompt = `USER_PROMPT: "${userPrompt}"
 
 CONTEXT_DOCS:
-${contextDocs.slice(0, 10000)}
+${contextDocs.slice(0, 8000)}
 
-CODE_STEPS:
-${codeSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
+RAW_SCRIPT:
+\`\`\`typescript
+${rawScript}
+\`\`\`
 
-Generate the JSON manifest for this video narration. Return ONLY the JSON array.`;
+TASK:
+1. Read the RAW_SCRIPT and identify all USER-FACING actions (goto, click, fill, expect, etc.)
+2. EXCLUDE setup actions like setViewportSize, waitForTimeout, waitForLoadState
+3. Create a manifest entry for EACH user-facing action with a natural narration
+4. Return ONLY the JSON array, no other text.`;
 
   try {
     const command = new InvokeModelCommand({
@@ -139,40 +189,100 @@ Generate the JSON manifest for this video narration. Return ONLY the JSON array.
   }
 }
 
-// Generate a mock manifest for development/testing when Bedrock is not available
-function generateMockManifest(codeSteps: string[]): any[] {
-  const steps = codeSteps.length > 0 ? codeSteps : [
-    "page.goto('https://example.com')",
-    "page.click('#login-button')",
-    "page.fill('#username', 'user@example.com')",
-    "page.fill('#password', '********')",
-    "page.click('#submit')",
-    "page.click('#dashboard')",
-    "page.click('#create-new')",
-    "page.fill('#title', 'New Item')",
-    "page.click('#save')",
-  ];
-
-  return steps.map((step, index) => ({
-    step_id: index + 1,
-    code_action: step,
-    narration: `Step ${index + 1}: ${getNarrationForStep(step)}`,
-    importance: index < 2 ? 'low' : index > steps.length - 3 ? 'high' : 'medium',
-  }));
+/**
+ * Generate narration for a specific Playwright action
+ * This maps each action type to a user-friendly description
+ */
+function getNarrationForStep(step: string): string {
+  const lowerStep = step.toLowerCase();
+  
+  // Navigation
+  if (lowerStep.includes('goto')) {
+    if (lowerStep.includes('saucedemo')) return 'Navigate to the Sauce Demo application.';
+    if (lowerStep.includes('inventory')) return 'Navigate to the inventory page.';
+    return 'Navigate to the application.';
+  }
+  
+  // Login-related
+  if (lowerStep.includes('username')) return 'Enter your username in the login field.';
+  if (lowerStep.includes('password')) return 'Enter your password securely.';
+  if (lowerStep.includes('login-button') || (lowerStep.includes('click') && lowerStep.includes('login'))) {
+    return 'Click the login button to sign in.';
+  }
+  
+  // Cart and checkout flow (SauceDemo specific)
+  if (lowerStep.includes('add-to-cart') || lowerStep.includes('add_to_cart')) {
+    if (lowerStep.includes('backpack')) return 'Add the Sauce Labs Backpack to your cart.';
+    return 'Add the item to your shopping cart.';
+  }
+  if (lowerStep.includes('shopping_cart') || lowerStep.includes('cart_link')) {
+    return 'Click on the shopping cart to view your items.';
+  }
+  if (lowerStep.includes('checkout')) return 'Proceed to checkout.';
+  if (lowerStep.includes('firstname') || lowerStep.includes('first-name')) return 'Enter your first name.';
+  if (lowerStep.includes('lastname') || lowerStep.includes('last-name')) return 'Enter your last name.';
+  if (lowerStep.includes('postalcode') || lowerStep.includes('postal-code') || lowerStep.includes('zip')) {
+    return 'Enter your postal code.';
+  }
+  if (lowerStep.includes('continue')) return 'Click continue to proceed.';
+  if (lowerStep.includes('finish')) return 'Click finish to complete your order.';
+  
+  // Assertions
+  if (lowerStep.includes('expect')) {
+    if (lowerStep.includes('tohaveurl') && lowerStep.includes('inventory')) {
+      return 'Verify that you are now on the inventory page.';
+    }
+    if (lowerStep.includes('tohavetext')) {
+      if (lowerStep.includes('thank you') || lowerStep.includes('complete')) {
+        return 'Verify the order confirmation message appears.';
+      }
+      if (lowerStep.includes('backpack')) return 'Verify the item name is correct.';
+      return 'Verify the expected text is displayed.';
+    }
+    if (lowerStep.includes('cart_badge') || lowerStep.includes('shopping_cart_badge')) {
+      return 'Verify the cart shows the correct number of items.';
+    }
+    return 'Verify the expected result.';
+  }
+  
+  // Generic actions
+  if (lowerStep.includes('fill')) return 'Fill in the required information.';
+  if (lowerStep.includes('click')) return 'Click to proceed with the action.';
+  if (lowerStep.includes('setviewportsize')) return 'Set up the browser window size.';
+  if (lowerStep.includes('waitfortimeout')) return 'Wait for the page to stabilize.';
+  
+  return 'Perform this action as shown.';
 }
 
-function getNarrationForStep(step: string): string {
-  if (step.includes('goto')) return 'Navigate to the application homepage.';
-  if (step.includes('login') || step.includes('Login')) return 'Click the login button to access the authentication page.';
-  if (step.includes('username') || step.includes('email')) return 'Enter your username or email address in the input field.';
-  if (step.includes('password')) return 'Enter your secure password.';
-  if (step.includes('submit')) return 'Click submit to proceed with the action.';
-  if (step.includes('dashboard')) return 'Navigate to the dashboard to view your overview.';
-  if (step.includes('create') || step.includes('new')) return 'Click to create a new item.';
-  if (step.includes('save')) return 'Save your changes.';
-  if (step.includes('fill')) return 'Fill in the required information.';
-  if (step.includes('click')) return 'Click to proceed with the next action.';
-  return 'Perform this action as shown.';
+/**
+ * Generate a mock manifest for development/testing when Bedrock is not available
+ * Creates exactly ONE manifest entry per code step (1:1 correspondence)
+ */
+function generateMockManifest(codeSteps: string[]): any[] {
+  // Default steps if none provided
+  const steps = codeSteps.length > 0 ? codeSteps : [
+    "page.goto('https://www.saucedemo.com/')",
+    "page.locator('[data-test=\"username\"]').fill('standard_user')",
+    "page.locator('[data-test=\"password\"]').fill('secret_sauce')",
+    "page.locator('[data-test=\"login-button\"]').click()",
+    "expect(page).toHaveURL(/.*inventory.html/)",
+  ];
+
+  // Filter out non-action steps like setViewportSize and waitForTimeout
+  const actionSteps = steps.filter(step => {
+    const lowerStep = step.toLowerCase();
+    // Keep meaningful actions, filter out setup/utility calls
+    return !lowerStep.includes('setviewportsize') && 
+           !lowerStep.includes('waitfortimeout');
+  });
+
+  // Generate 1:1 manifest entries
+  return actionSteps.map((step, index) => ({
+    step_id: index + 1,
+    code_action: step,
+    narration: getNarrationForStep(step),
+    importance: index < 2 ? 'low' : index > actionSteps.length - 3 ? 'high' : 'medium',
+  }));
 }
 
 export async function POST(
@@ -220,7 +330,8 @@ export async function POST(
     // Get file details for selected files
     const selectedFileIds = project.selectedFiles || [];
     let contextDocs = '';
-    let codeSteps: string[] = [];
+    let rawScriptContent = '';  // Store raw script for Bedrock
+    let codeSteps: string[] = [];  // Extracted steps for mock fallback
 
     for (const fileId of selectedFileIds) {
       // Query to get file details
@@ -241,7 +352,9 @@ export async function POST(
           // In production, use Textract for better extraction
           contextDocs += `\n\n--- ${fileResult.Item.name} ---\n${content}`;
         } else if (fileResult.Item.type === 'test') {
-          // Playwright test file
+          // Store raw script for Bedrock to analyze
+          rawScriptContent = content;
+          // Also extract steps for mock fallback
           const steps = await extractPlaywrightSteps(content);
           codeSteps.push(...steps);
         }
@@ -260,10 +373,12 @@ export async function POST(
       manifest = generateMockManifest(codeSteps);
     } else {
       try {
+        // Pass raw script to Bedrock for intelligent action extraction
+        console.log('Using Bedrock for intelligent action extraction from script');
         manifest = await generateScriptWithBedrock(
           project.userPrompt || 'Create a professional video tutorial.',
           contextDocs,
-          codeSteps
+          rawScriptContent || codeSteps.join('\n')  // Fallback to extracted steps if no raw script
         );
       } catch (bedrockError) {
         console.warn('Bedrock failed, falling back to mock:', bedrockError);
