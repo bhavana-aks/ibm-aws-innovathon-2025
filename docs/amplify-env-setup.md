@@ -63,7 +63,7 @@ Instead of using explicit credentials, configure the Amplify service role to hav
 
 ### Step 3: Verify amplify.yml Configuration
 
-Ensure your `amplify.yml` includes the `serverSideEnvironmentVariables` section:
+Amplify doesn't automatically expose environment variables to the SSR runtime. You must write them to a `.env.production` file during the build phase:
 
 ```yaml
 version: 1
@@ -74,6 +74,18 @@ applications:
         preBuild:
           commands:
             - npm ci
+            # Write server-side environment variables to .env.production
+            - echo "APP_AWS_REGION=$APP_AWS_REGION" >> .env.production
+            - echo "APP_AWS_ACCESS_KEY_ID=$APP_AWS_ACCESS_KEY_ID" >> .env.production
+            - echo "APP_AWS_SECRET_ACCESS_KEY=$APP_AWS_SECRET_ACCESS_KEY" >> .env.production
+            - echo "S3_BUCKET_NAME=$S3_BUCKET_NAME" >> .env.production
+            - echo "DYNAMODB_TABLE_NAME=$DYNAMODB_TABLE_NAME" >> .env.production
+            - echo "ECS_CLUSTER_NAME=$ECS_CLUSTER_NAME" >> .env.production
+            - echo "ECS_TASK_FAMILY=$ECS_TASK_FAMILY" >> .env.production
+            - echo "ECS_SUBNETS=$ECS_SUBNETS" >> .env.production
+            - echo "ECS_SECURITY_GROUPS=$ECS_SECURITY_GROUPS" >> .env.production
+            # Write public variables
+            - echo "NEXT_PUBLIC_BASE_URL=$NEXT_PUBLIC_BASE_URL" >> .env.production
         build:
           commands:
             - npm run build
@@ -85,18 +97,9 @@ applications:
         paths:
           - node_modules/**/*
           - .next/cache/**/*
-      serverSideEnvironmentVariables:
-        APP_AWS_REGION: ${APP_AWS_REGION}
-        APP_AWS_ACCESS_KEY_ID: ${APP_AWS_ACCESS_KEY_ID}
-        APP_AWS_SECRET_ACCESS_KEY: ${APP_AWS_SECRET_ACCESS_KEY}
-        S3_BUCKET_NAME: ${S3_BUCKET_NAME}
-        DYNAMODB_TABLE_NAME: ${DYNAMODB_TABLE_NAME}
-        ECS_CLUSTER_NAME: ${ECS_CLUSTER_NAME}
-        ECS_TASK_FAMILY: ${ECS_TASK_FAMILY}
-        ECS_SUBNETS: ${ECS_SUBNETS}
-        ECS_SECURITY_GROUPS: ${ECS_SECURITY_GROUPS}
-        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL}
 ```
+
+**Important**: The `.env.production` file is created during build and bundled with the deployment artifacts, making these variables available at runtime.
 
 ## Troubleshooting
 
