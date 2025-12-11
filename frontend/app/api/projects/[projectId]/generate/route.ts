@@ -32,8 +32,9 @@ const bedrockClient = new BedrockRuntimeClient(awsConfig);
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'VideoSaaS';
 const S3_BUCKET = process.env.S3_BUCKET_NAME || '';
 
+// 12-12-25: Updated prompt for natural, conversational demo-style narration
 // 10-12-25: Updated prompt to let Bedrock extract actions and filter out setup steps
-const SYSTEM_PROMPT = `You are an expert Technical Video Director and Playwright expert.
+const SYSTEM_PROMPT = `You are an expert Technical Video Director and Playwright expert creating a guided demo video.
 
 INPUTS:
 1. USER_PROMPT: The user's directive for how to create the video
@@ -69,29 +70,62 @@ CRITICAL RULES:
 4. step_id starts at 1 and increments for each included action
 5. Order must match the script execution order
 
-NARRATION RULES:
-1. Use natural, user-friendly language
-2. Do NOT mention technical selectors (data-test, #id, .class, etc.)
-3. Describe WHAT the user is doing, not HOW the code works
-4. Keep narrations concise (1-2 sentences max)
+NARRATION STYLE - THIS IS CRITICAL:
+You are narrating like a friendly guide giving a live demo to someone. The narration should:
+1. Sound CONVERSATIONAL and NATURAL - like you're walking someone through the app in person
+2. Use SECOND PERSON ("you/your") - you're guiding the viewer
+3. NEVER read out exact values like "enter admin as username" or "type password123"
+4. Instead, use generic references: "enter your username", "type in your password"
+5. Use transitional phrases naturally: "Now...", "Next...", "Go ahead and...", "Once that's done..."
+6. Group related actions mentally - login is ONE concept, not "enter username, enter password, click button"
+7. Keep it brief but warm - 1-2 short sentences max
+8. NEVER mention technical selectors, IDs, classes, or data attributes
+
+BAD (robotic) examples - DO NOT write like this:
+- "Enter admin in the username field."
+- "Fill password123 in the password input."
+- "Click on the login button."
+- "Navigate to https://example.com/dashboard."
+
+GOOD (conversational) examples - Write like this:
+- "Go ahead and log in with your credentials."
+- "Enter your username here."
+- "Now type in your password."
+- "Click the login button to continue."
+- "Let's head over to the dashboard."
+- "You'll notice the cart icon in the top right - click on that."
+- "Perfect! Now fill in your shipping details."
+- "Once you're ready, hit that checkout button."
 
 OUTPUT FORMAT (JSON array only, no other text):
 [
   {
     "step_id": 1,
     "code_action": "await page.goto('https://example.com')",
-    "narration": "Navigate to the application.",
+    "narration": "Let's start by opening the application.",
     "importance": "low"
   },
   {
     "step_id": 2,
-    "code_action": "await page.locator('[data-test=\"username\"]').fill('user')",
-    "narration": "Enter your username.",
+    "code_action": "await page.locator('[data-test=\"username\"]').fill('admin')",
+    "narration": "Go ahead and enter your username.",
+    "importance": "medium"
+  },
+  {
+    "step_id": 3,
+    "code_action": "await page.locator('[data-test=\"password\"]').fill('secret123')",
+    "narration": "Now type in your password.",
+    "importance": "medium"
+  },
+  {
+    "step_id": 4,
+    "code_action": "await page.locator('[data-test=\"login-btn\"]').click()",
+    "narration": "Click the login button to sign in.",
     "importance": "medium"
   }
 ]
 
-importance: "low" (setup), "medium" (main flow), "high" (critical actions/verifications)`;
+importance: "low" (setup/navigation), "medium" (main flow), "high" (critical actions/verifications)`;
 
 async function getFileContent(s3Key: string): Promise<string> {
   try {
@@ -206,67 +240,80 @@ TASK:
 
 /**
  * Generate narration for a specific Playwright action
+ * 12-12-25: Updated to use natural, conversational demo-style language
  * This maps each action type to a user-friendly description
  */
-function getNarrationForStep(step: string): string {
+function getNarrationForStep(step: string, stepIndex: number): string {
   const lowerStep = step.toLowerCase();
+  
+  // Transitional phrases to make narration flow naturally
+  const transitions = ['Now', 'Next', 'Go ahead and', 'Then', ''];
+  const transition = stepIndex === 0 ? "Let's start by" : transitions[stepIndex % transitions.length];
+  const addTransition = (text: string) => transition ? `${transition} ${text.charAt(0).toLowerCase()}${text.slice(1)}` : text;
   
   // Navigation
   if (lowerStep.includes('goto')) {
-    if (lowerStep.includes('saucedemo')) return 'Navigate to the Sauce Demo application.';
-    if (lowerStep.includes('inventory')) return 'Navigate to the inventory page.';
-    return 'Navigate to the application.';
+    if (stepIndex === 0) return "Let's open up the application.";
+    if (lowerStep.includes('inventory')) return addTransition('Head over to the inventory page.');
+    if (lowerStep.includes('cart')) return addTransition('Navigate to your cart.');
+    if (lowerStep.includes('checkout')) return addTransition('Move on to the checkout page.');
+    return addTransition('Navigate to the next page.');
   }
   
   // Login-related
-  if (lowerStep.includes('username')) return 'Enter your username in the login field.';
-  if (lowerStep.includes('password')) return 'Enter your password securely.';
+  if (lowerStep.includes('username')) return addTransition('Enter your username here.');
+  if (lowerStep.includes('password')) return addTransition('Type in your password.');
   if (lowerStep.includes('login-button') || (lowerStep.includes('click') && lowerStep.includes('login'))) {
-    return 'Click the login button to sign in.';
+    return addTransition('Click the login button to sign in.');
   }
   
-  // Cart and checkout flow (SauceDemo specific)
+  // Cart and checkout flow
   if (lowerStep.includes('add-to-cart') || lowerStep.includes('add_to_cart')) {
-    if (lowerStep.includes('backpack')) return 'Add the Sauce Labs Backpack to your cart.';
-    return 'Add the item to your shopping cart.';
+    return addTransition('Add this item to your cart.');
   }
-  if (lowerStep.includes('shopping_cart') || lowerStep.includes('cart_link')) {
-    return 'Click on the shopping cart to view your items.';
+  if (lowerStep.includes('shopping_cart') || lowerStep.includes('cart_link') || lowerStep.includes('cart_icon')) {
+    return addTransition("Click on the cart icon to see what you've added.");
   }
-  if (lowerStep.includes('checkout')) return 'Proceed to checkout.';
-  if (lowerStep.includes('firstname') || lowerStep.includes('first-name')) return 'Enter your first name.';
-  if (lowerStep.includes('lastname') || lowerStep.includes('last-name')) return 'Enter your last name.';
+  if (lowerStep.includes('checkout') && lowerStep.includes('click')) {
+    return addTransition('Proceed to checkout.');
+  }
+  if (lowerStep.includes('firstname') || lowerStep.includes('first-name')) {
+    return addTransition('Fill in your first name.');
+  }
+  if (lowerStep.includes('lastname') || lowerStep.includes('last-name')) {
+    return addTransition('Enter your last name.');
+  }
   if (lowerStep.includes('postalcode') || lowerStep.includes('postal-code') || lowerStep.includes('zip')) {
-    return 'Enter your postal code.';
+    return addTransition('Add your postal code.');
   }
-  if (lowerStep.includes('continue')) return 'Click continue to proceed.';
-  if (lowerStep.includes('finish')) return 'Click finish to complete your order.';
+  if (lowerStep.includes('continue')) return addTransition('Click continue to move forward.');
+  if (lowerStep.includes('finish')) return "Perfect! Click finish to complete your order.";
   
-  // Assertions
+  // Assertions - make these sound like observations
   if (lowerStep.includes('expect')) {
     if (lowerStep.includes('tohaveurl') && lowerStep.includes('inventory')) {
-      return 'Verify that you are now on the inventory page.';
+      return "Great - you should now see the inventory page.";
     }
     if (lowerStep.includes('tohavetext')) {
       if (lowerStep.includes('thank you') || lowerStep.includes('complete')) {
-        return 'Verify the order confirmation message appears.';
+        return "And there's your confirmation! The order is complete.";
       }
-      if (lowerStep.includes('backpack')) return 'Verify the item name is correct.';
-      return 'Verify the expected text is displayed.';
+      return "Notice how the text updates on screen.";
     }
     if (lowerStep.includes('cart_badge') || lowerStep.includes('shopping_cart_badge')) {
-      return 'Verify the cart shows the correct number of items.';
+      return "You can see the cart has updated with your items.";
     }
-    return 'Verify the expected result.';
+    return "Take a moment to see the result.";
   }
   
-  // Generic actions
-  if (lowerStep.includes('fill')) return 'Fill in the required information.';
-  if (lowerStep.includes('click')) return 'Click to proceed with the action.';
-  if (lowerStep.includes('setviewportsize')) return 'Set up the browser window size.';
-  if (lowerStep.includes('waitfortimeout')) return 'Wait for the page to stabilize.';
+  // Generic actions with natural phrasing
+  if (lowerStep.includes('fill')) return addTransition('Fill in this field.');
+  if (lowerStep.includes('click')) return addTransition('Click here to continue.');
+  if (lowerStep.includes('select')) return addTransition('Select an option from the dropdown.');
+  if (lowerStep.includes('check')) return addTransition('Check this option.');
+  if (lowerStep.includes('type')) return addTransition('Type in the required information.');
   
-  return 'Perform this action as shown.';
+  return addTransition('Complete this step.');
 }
 
 /**
@@ -291,11 +338,11 @@ function generateMockManifest(codeSteps: string[]): any[] {
            !lowerStep.includes('waitfortimeout');
   });
 
-  // Generate 1:1 manifest entries
+  // Generate 1:1 manifest entries with conversational narration
   return actionSteps.map((step, index) => ({
     step_id: index + 1,
     code_action: step,
-    narration: getNarrationForStep(step),
+    narration: getNarrationForStep(step, index),
     importance: index < 2 ? 'low' : index > actionSteps.length - 3 ? 'high' : 'medium',
   }));
 }

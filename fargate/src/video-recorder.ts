@@ -195,8 +195,7 @@ async function muxAudioWithVideo(
   }
   
   // Build the amix filter to combine all audio tracks
-  // normalize=0 prevents volume drop when mixing many inputs (sum instead of average)
-  const mixFilter = `${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=longest:dropout_transition=0:normalize=0[aout]`;
+  const mixFilter = `${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=longest[aout]`;
   const filterComplex = [...filterParts, mixFilter].join(';');
   
   const ffmpegArgs = [
@@ -642,3 +641,4 @@ export async function recordVideoSimple(
     };
   }
 }
+
