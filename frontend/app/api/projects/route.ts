@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
       PK: formattedTenantId,
       SK: `PROJ#${projectId}`,
       name,
-      status: 'DRAFT',
+      status: 'GENERATING',  // Set to GENERATING since we trigger generation immediately
       userPrompt: userPrompt || 'Create a professional video tutorial.',
       selectedFiles,
       createdAt: now,
