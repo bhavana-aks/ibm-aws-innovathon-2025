@@ -119,27 +119,19 @@ export async function POST(request: NextRequest) {
 
     await docClient.send(command);
 
-    // TODO: Trigger Step Functions workflow to generate script
-    // For now, we'll trigger the script generation via a separate API call
-    // This will be replaced with Step Functions integration
-
-    // Trigger script generation
-    try {
-      const generateResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/projects/${projectId}/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-tenant-id': formattedTenantId,
-        },
-      });
-      
-      if (!generateResponse.ok) {
-        console.warn('Script generation trigger returned non-OK status');
-      }
-    } catch (genError) {
-      console.warn('Failed to trigger script generation:', genError);
-      // Don't fail project creation if generation fails to trigger
-    }
+    // Trigger script generation (fire-and-forget)
+    // Don't await - let the generate route run asynchronously
+    // The frontend will poll for status updates
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://localhost:3000`;
+    fetch(`${baseUrl}/api/projects/${projectId}/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-tenant-id': formattedTenantId,
+      },
+    }).catch(err => {
+      console.warn('Failed to trigger script generation:', err);
+    });
 
     return NextResponse.json({ 
       projectId,
